@@ -483,4 +483,28 @@ func TestLobbyMux(t *testing.T) {
 			t.Error("should've filtered out message")
 		}
 	})
+
+	t.Run("server sends a heartbeat within the configured interval to keep iddle clients connected", func(t *testing.T) {
+		lm := NewLobbyMux(Configuration{
+			LobbyExpiration:     time.Second * 10,
+			HeartbeatInterval:   time.Millisecond * 200,
+			LobbyMaxCount:       1,
+			LobbyMaxClientCount: 1,
+			MessageSizeLimit:    100,
+		})
+		s := httptest.NewServer(lm)
+		defer s.Close()
+
+		result, _ := sseClient(s, "lobby-1", "client-1", func(msg []byte, _ func(string, string) int) bool {
+			if bytes.Contains(msg, []byte(": ping")) {
+				slog.Info("heartbeat received")
+				return true
+			}
+			return false
+		})
+
+		if result == false {
+			t.Error("should've receive a heartbeat ping within the timeout")
+		}
+	})
 }

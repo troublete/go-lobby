@@ -16,6 +16,7 @@ import (
 
 type Configuration struct {
 	LobbyExpiration     time.Duration
+	HeartbeatInterval   time.Duration
 	LobbyMaxCount       int
 	LobbyMaxClientCount int
 	MessageSizeLimit    int // defines the max message size in bytes
@@ -26,6 +27,7 @@ type Configuration struct {
 
 var DefaultConfiguration = Configuration{
 	LobbyExpiration:     5 * time.Minute,
+	HeartbeatInterval:   2 * time.Minute,
 	LobbyMaxCount:       1000,
 	LobbyMaxClientCount: 10,
 	MessageSizeLimit:    100,
@@ -245,6 +247,11 @@ func NewLobbyMux(config ...Configuration) *LobbyMux {
 		c = config[0]
 	}
 
+	// guard against a zero/unset interval; time.NewTicker panics on <= 0
+	if c.HeartbeatInterval <= 0 {
+		c.HeartbeatInterval = DefaultConfiguration.HeartbeatInterval
+	}
+
 	s := &LobbyStore{c: c}
 	go func() {
 		for {
@@ -298,9 +305,12 @@ func NewLobbyMux(config ...Configuration) *LobbyMux {
 			disconnected <- true
 		}()
 
+		iddleTicker := time.NewTicker(c.HeartbeatInterval)
+
 		for {
 			select {
 			case <-disconnected:
+				iddleTicker.Stop()
 				return
 
 			case msg := <-client.Feed:
@@ -327,6 +337,14 @@ func NewLobbyMux(config ...Configuration) *LobbyMux {
 					slog.Error("failed to write message", "err", err)
 				}
 
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			case <-iddleTicker.C:
+				_, err := w.Write([]byte(": ping\n\n"))
+				if err != nil {
+					slog.Error("failed to write message", "err", err)
+				}
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
 				}
